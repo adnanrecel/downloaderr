@@ -214,4 +214,81 @@ document.addEventListener('DOMContentLoaded', () => {
         const match = url.match(regExp);
         return (match && match[7].length === 11) ? match[7] : null;
     }
+
+    // İndirme işlemini başlat
+    function downloadVideo(videoId, itag) {
+        const downloadBtn = document.getElementById('downloadBtn');
+        const downloadMessage = document.getElementById('downloadMessage');
+        downloadBtn.disabled = true;
+        downloadMessage.textContent = '';
+        
+        try {
+            // İndirme isteği gönder
+            fetch('/api/download', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ videoId, itag })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('İndirme başlatıldı:', data);
+                downloadMessage.textContent = 'İndirme başlatıldı...';
+                
+                // İlerleme takibi için bir event source başlat
+                const progressSource = new EventSource(`/api/progress/${videoId}`);
+                
+                progressSource.onmessage = function(event) {
+                    const progress = JSON.parse(event.data);
+                    updateProgressBar(progress.progress);
+                    downloadMessage.textContent = progress.status;
+                    
+                    // İndirme tamamlandıysa veya hata oluştuysa
+                    if (progress.complete || progress.error) {
+                        progressSource.close();
+                        
+                        if (progress.complete && progress.outputFile) {
+                            // İndirme bağlantısı oluştur - MP4 dosyasını doğrudan indir
+                            downloadMessage.textContent = 'İndirme tamamlandı! İndirme bağlantısına tıklayarak videoyu indirebilirsiniz.';
+                            const downloadLink = document.createElement('a');
+                            downloadLink.href = `/download/${progress.outputFile}`;
+                            downloadLink.className = 'download-link';
+                            downloadLink.textContent = 'Videoyu İndir';
+                            downloadLink.target = '_blank';
+                            
+                            // Ekrandaki eski bağlantıları temizle ve yenisini ekle
+                            const oldLinks = document.querySelectorAll('.download-link');
+                            oldLinks.forEach(link => link.remove());
+                            
+                            downloadMessage.appendChild(document.createElement('br'));
+                            downloadMessage.appendChild(downloadLink);
+                        } else if (progress.error) {
+                            downloadMessage.textContent = `Hata: ${progress.error}`;
+                        }
+                        
+                        // İndirme butonu tekrar etkinleştir
+                        setTimeout(() => {
+                            downloadBtn.disabled = false;
+                        }, 3000);  // 3 saniye bekle
+                    }
+                };
+                
+                progressSource.onerror = function() {
+                    progressSource.close();
+                    downloadMessage.textContent = 'Bağlantı kesildi, sayfayı yenileyin.';
+                    downloadBtn.disabled = false;
+                };
+            })
+            .catch(error => {
+                console.error('İndirme hatası:', error);
+                downloadMessage.textContent = `İndirme hatası: ${error.message}`;
+                downloadBtn.disabled = false;
+            });
+        } catch (error) {
+            console.error('İndirme işlemi başlatma hatası:', error);
+            downloadMessage.textContent = `Hata: ${error.message}`;
+            downloadBtn.disabled = false;
+        }
+    }
 }); 

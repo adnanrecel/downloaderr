@@ -87,9 +87,14 @@ app.post('/api/download', async (req, res) => {
         const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
         
         // İndirme işlemi bir boru hattında çalışacak
-        downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio);
-        
-        return res.json({ message: 'İndirme başlatıldı', videoId });
+        downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio)
+            .then(outputFile => {
+                return res.json({ message: 'İndirme başlatıldı', videoId, outputFile });
+            })
+            .catch(error => {
+                console.error('İndirme başlatılırken hata:', error);
+                return res.status(500).json({ error: error.message });
+            });
         
     } catch (error) {
         console.error('İndirme başlatılırken hata:', error);
@@ -122,9 +127,14 @@ app.get('/api/progress/:videoId', (req, res) => {
             
             // İşlem tamamlandıktan sonra temizle
             if (progressTracker[videoId].complete) {
+                console.log(`İşlem tamamlandı, ${videoId} için progressTracker temizleme planlandı (3 dakika sonra)`);
                 setTimeout(() => {
-                    delete progressTracker[videoId];
-                }, 60000); // 1 dakika sonra temizle
+                    // Tekrar kontrol et, çünkü arada silinmiş olabilir
+                    if (progressTracker[videoId]) {
+                        console.log(`${videoId} için progressTracker temizleniyor`);
+                        delete progressTracker[videoId];
+                    }
+                }, 180000); // 3 dakika sonra temizle (60000ms -> 1 dakika)
             }
         }
     }, 1000);
@@ -156,6 +166,7 @@ app.get('/download/:filename', (req, res) => {
         console.log(`İndirilen dosya boyutu: ${Math.round(stats.size / (1024 * 1024))} MB`);
     } catch (err) {
         console.error(`Dosya stat hatası: ${err.message}`);
+        return res.status(500).json({ error: 'Dosya bilgileri okunamadı: ' + err.message });
     }
     
     // Dosya uzantısını al
@@ -174,9 +185,9 @@ app.get('/download/:filename', (req, res) => {
     const realFilename = path.basename(filename);
     
     // Content-Type başlığını ayarla (eğer bilinen bir uzantı ise)
-    if (contentTypes[fileExt]) {
-        res.setHeader('Content-Type', contentTypes[fileExt]);
-    }
+    const contentType = contentTypes[fileExt] || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    console.log(`Dosya türü: ${contentType} (${fileExt} uzantısı için)`);
     
     // Tarayıcıda açmak yerine indirme olarak ayarla
     res.setHeader('Content-Disposition', `attachment; filename="${realFilename}"`);
@@ -202,436 +213,585 @@ function getVideoInfo(url) {
         // Tarayıcı bilgisi (user-agent) ekle
         const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
         
-        try {
-            // Önce web API ile deneyelim - Render ortamında bu daha güvenilir olabilir
-            console.log('YouTube web API üzerinden video bilgileri alınıyor...');
-            
-            fetch(`https://www.youtube.com/oembed?url=${url}&format=json`, {
-                headers: {
-                    'User-Agent': userAgent
-                }
-            })
-            .then(res => res.json())
-            .then(data => {
-                // Çok çeşitli format bilgilerini oluştur
-                const formats = [
-                    // Video + Ses formatları (MP4)
-                    {
-                        itag: 'best',
-                        qualityLabel: 'En iyi kalite (1080p)',
-                        container: 'mp4',
-                        hasVideo: true,
-                        hasAudio: true,
-                        format_note: 'Full HD Video + Ses',
-                        filesize: 'Otomatik'
-                    },
-                    {
-                        itag: '22',
-                        qualityLabel: '720p',
-                        container: 'mp4',
-                        hasVideo: true,
-                        hasAudio: true,
-                        format_note: 'HD Video + Ses',
-                        filesize: 'Otomatik'
-                    },
-                    {
-                        itag: '18',
-                        qualityLabel: '360p',
-                        container: 'mp4',
-                        hasVideo: true,
-                        hasAudio: true,
-                        format_note: 'Orta Kalite Video + Ses',
-                        filesize: 'Otomatik'
-                    },
-                    // Sadece video formatları
-                    {
-                        itag: '137',
-                        qualityLabel: '1080p',
-                        container: 'mp4',
-                        hasVideo: true,
-                        hasAudio: false,
-                        format_note: 'Full HD (Sadece Video)',
-                        filesize: 'Otomatik'
-                    },
-                    {
-                        itag: '136',
-                        qualityLabel: '720p',
-                        container: 'mp4',
-                        hasVideo: true,
-                        hasAudio: false,
-                        format_note: 'HD (Sadece Video)',
-                        filesize: 'Otomatik'
-                    },
-                    // Sadece ses formatları
-                    {
-                        itag: '140',
-                        qualityLabel: '128kbps',
-                        container: 'm4a',
-                        hasVideo: false,
-                        hasAudio: true,
-                        format_note: 'M4A Audio (Sadece Ses)',
-                        filesize: 'Otomatik'
-                    },
-                    {
-                        itag: '251',
-                        qualityLabel: '160kbps',
-                        container: 'webm',
-                        hasVideo: false,
-                        hasAudio: true,
-                        format_note: 'Opus Audio (Sadece Ses)',
-                        filesize: 'Otomatik'
-                    }
-                ];
+        // yt-dlp ile doğrudan mevcut formatları içeren video bilgilerini al
+        const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
+        const command = process.env.NODE_ENV === 'production' 
+            ? `${ytdlpPath} -F "${url}" --user-agent "${userAgent}" --no-check-certificate`
+            : `"${ytdlpPath}" -F "${url}" --user-agent "${userAgent}" --no-check-certificate`;
+        
+        console.log("Video formatları sorgulanıyor. Komut:", command);
+        
+        exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+            if (error) {
+                console.error('yt-dlp format sorgusu hatası:', error);
+                console.error('yt-dlp stderr:', stderr);
                 
-                console.log('Web API kullanılarak video bilgileri alındı');
+                // Hata durumunda temel video bilgilerini al ve minimum format listesi sun
+                fetchBasicInfo(url, userAgent, resolve, reject);
+                return;
+            }
+            
+            try {
+                // Format çıktısını işle
+                const formatOutput = stdout;
+                console.log("Format sorgusu yanıtı alındı, işleniyor...");
+                
+                // yt-dlp format çıktısını satırlara böl
+                const lines = formatOutput.split('\n');
+                const formats = [];
+                
+                // Başlık satırını bul
+                const titleLine = lines.find(line => line.startsWith('[info]'));
+                let title = "YouTube Video";
+                if (titleLine) {
+                    const titleMatch = titleLine.match(/\[info\] (.*?):/);
+                    if (titleMatch && titleMatch[1]) {
+                        title = titleMatch[1];
+                    }
+                }
+                
+                // Video ID
+                const videoId = extractVideoId(url);
+                const thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+                
+                // Format satırlarını işle
+                // Formatları işle, ID, çözünürlük ve açıklama bilgilerini al
+                for (const line of lines) {
+                    // Format satırı örneği: 22 mp4 1280x720 30fps avc1.64001F,mp4a.40.2 (video+audio)
+                    const formatMatch = line.match(/^(\d+)\s+(\w+)\s+(.+?)(\s+\((.+)\))?$/);
+                    if (formatMatch) {
+                        const formatId = formatMatch[1];
+                        const container = formatMatch[2];
+                        const description = formatMatch[3];
+                        const formatType = formatMatch[5] || '';
+                        
+                        const hasVideo = formatType.includes('video') || description.includes('x') || description.includes('fps');
+                        const hasAudio = formatType.includes('audio');
+                        
+                        let qualityLabel = description;
+                        // Çözünürlük bilgisini al
+                        const resMatch = description.match(/(\d+)x(\d+)/);
+                        if (resMatch) {
+                            qualityLabel = `${resMatch[2]}p`;
+                            // FPS bilgisini ekle
+                            const fpsMatch = description.match(/(\d+)fps/);
+                            if (fpsMatch) {
+                                qualityLabel += ` ${fpsMatch[1]}fps`;
+                            }
+                        } else if (description.includes('audio only')) {
+                            // Ses kalitesi
+                            const kbpsMatch = description.match(/(\d+)k/);
+                            if (kbpsMatch) {
+                                qualityLabel = `${kbpsMatch[1]}kbps`;
+                            } else {
+                                qualityLabel = 'Audio';
+                            }
+                        }
+                        
+                        let formatNote = '';
+                        if (hasVideo && hasAudio) {
+                            formatNote = `${qualityLabel} (Video + Ses)`;
+                        } else if (hasVideo) {
+                            formatNote = `${qualityLabel} (Sadece Video)`;
+                        } else if (hasAudio) {
+                            formatNote = `${qualityLabel} (Sadece Ses)`;
+                        }
+                        
+                        formats.push({
+                            itag: formatId,
+                            qualityLabel: qualityLabel,
+                            container: container,
+                            hasVideo: hasVideo,
+                            hasAudio: hasAudio,
+                            format_note: formatNote,
+                            filesize: 'Otomatik'
+                        });
+                    }
+                }
+                
+                // Özel formatları ekle - kombinasyonlar
+                // En yüksek kaliteli video + ses
+                if (formats.length > 0) {
+                    const bestVideo = formats.find(f => f.hasVideo && !f.hasAudio);
+                    const bestAudio = formats.find(f => f.hasAudio && !f.hasVideo);
+                    
+                    if (bestVideo && bestAudio) {
+                        formats.unshift({
+                            itag: `${bestVideo.itag}+${bestAudio.itag}`,
+                            qualityLabel: bestVideo.qualityLabel,
+                            container: 'mp4',
+                            hasVideo: true,
+                            hasAudio: true,
+                            format_note: `${bestVideo.qualityLabel} (En İyi Kalite Video + Ses)`,
+                            filesize: 'Otomatik'
+                        });
+                    }
+                    
+                    // En iyi otomatik kalite
+                    formats.unshift({
+                        itag: 'best',
+                        qualityLabel: 'Otomatik',
+                        container: 'mp4',
+                        hasVideo: true,
+                        hasAudio: true,
+                        format_note: 'En İyi Kalite (Otomatik)',
+                        filesize: 'Otomatik'
+                    });
+                }
+                
+                // Formatları kaliteye göre sırala
+                formats.sort((a, b) => {
+                    // Öncelik sırası: 1. Video+Ses, 2. Sadece Video, 3. Sadece Ses
+                    const typeOrder = (format) => {
+                        if (format.hasVideo && format.hasAudio) return 0;
+                        if (format.hasVideo) return 1;
+                        if (format.hasAudio) return 2;
+                        return 3;
+                    };
+                    
+                    const orderA = typeOrder(a);
+                    const orderB = typeOrder(b);
+                    
+                    if (orderA !== orderB) return orderA - orderB;
+                    
+                    // Aynı tiptekiler için çözünürlüğe göre sırala
+                    const heightA = a.qualityLabel.includes('p') ? parseInt(a.qualityLabel) : 0;
+                    const heightB = b.qualityLabel.includes('p') ? parseInt(b.qualityLabel) : 0;
+                    return heightB - heightA;
+                });
+                
+                console.log(`${formats.length} adet format bulundu.`);
                 resolve({
-                    title: data.title,
-                    thumbnailUrl: data.thumbnail_url,
+                    title: title,
+                    thumbnailUrl: thumbnailUrl,
                     formats: formats
                 });
-            })
-            .catch(err => {
-                console.error('Web API ile bilgi alma hatası, yt-dlp deneniyor:', err);
                 
-                // Web API başarısız olursa yt-dlp ile deneyelim (yedek yöntem)
-                tryYtDlp();
-            });
-        } catch (error) {
-            console.error('Hata oluştu, yt-dlp deneniyor:', error);
-            tryYtDlp();
-        }
-        
-        // yt-dlp ile bilgi almayı deneyen fonksiyon
-        function tryYtDlp() {
-            // yt-dlp komutu ile video bilgilerini JSON formatında almak
-            const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
-            const command = process.env.NODE_ENV === 'production' 
-                ? `${ytdlpPath} "${url}" --dump-json --no-warnings --no-call-home --skip-download --user-agent "${userAgent}"`
-                : `"${ytdlpPath}" "${url}" --dump-json --no-warnings --no-call-home --skip-download --user-agent "${userAgent}"`;
-            
-            console.log("yt-dlp ile bilgi alınmaya çalışılıyor. Komut:", command);
-            
-            exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-                if (error) {
-                    console.error('yt-dlp JSON bilgi alma hatası:', error);
-                    console.error('yt-dlp stderr:', stderr);
-                    
-                    // YouTube video ID'sini URL'den çıkartıp thumbnail oluşturalım
-                    const videoId = extractVideoId(url);
-                    const thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
-                    
-                    // Temel formatları manuel olarak oluştur
-                    const formats = [
-                        // Video + Ses formatları (MP4)
-                        {
-                            itag: 'best',
-                            qualityLabel: 'En iyi kalite (1080p)',
-                            container: 'mp4',
-                            hasVideo: true,
-                            hasAudio: true,
-                            format_note: 'Full HD Video + Ses',
-                            filesize: 'Otomatik'
-                        },
-                        {
-                            itag: '22',
-                            qualityLabel: '720p',
-                            container: 'mp4',
-                            hasVideo: true,
-                            hasAudio: true,
-                            format_note: 'HD Video + Ses',
-                            filesize: 'Otomatik'
-                        },
-                        {
-                            itag: '18',
-                            qualityLabel: '360p',
-                            container: 'mp4',
-                            hasVideo: true,
-                            hasAudio: true,
-                            format_note: 'Orta Kalite Video + Ses',
-                            filesize: 'Otomatik'
-                        },
-                        // Sadece ses formatları
-                        {
-                            itag: '140',
-                            qualityLabel: '128kbps',
-                            container: 'm4a',
-                            hasVideo: false,
-                            hasAudio: true,
-                            format_note: 'M4A Audio (Sadece Ses)',
-                            filesize: 'Otomatik'
-                        }
-                    ];
-                    
-                    // URL'den video başlığını tahmin et
-                    const urlObj = new URL(url);
-                    let title = "YouTube Video";
-                    if (urlObj.searchParams.has('v')) {
-                        const videoId = urlObj.searchParams.get('v');
-                        title = `YouTube Video (${videoId})`;
-                    }
-                    
-                    console.log('Manuel olarak format bilgileri oluşturuldu');
-                    resolve({
-                        title: title,
-                        thumbnailUrl: thumbnailUrl,
-                        formats: formats
-                    });
-                    return;
-                }
-                
-                try {
-                    processVideoInfo(stdout, resolve, reject);
-                } catch (parseError) {
-                    console.error('JSON işleme hatası:', parseError);
-                    reject(parseError);
-                }
-            });
-        }
+            } catch (parseError) {
+                console.error('Format çıktısı işleme hatası:', parseError);
+                fetchBasicInfo(url, userAgent, resolve, reject);
+            }
+        });
     });
 }
 
-// JSON formatındaki video bilgilerini işleyen fonksiyon
-function processVideoInfo(jsonData, resolve, reject) {
-    try {
-        const info = JSON.parse(jsonData);
-        
-        // Thumbnail URL'i bul
-        const thumbnail = info.thumbnails ? 
-            info.thumbnails[info.thumbnails.length - 1]?.url : 
-            `https://i.ytimg.com/vi/${info.id}/maxresdefault.jpg`;
-        
-        // Format bilgilerini düzenle - tüm formatları al
-        const formats = info.formats
-            .map(format => {
-                const hasVideo = format.vcodec !== 'none';
-                const hasAudio = format.acodec !== 'none';
-                
-                let qualityLabel = '';
-                if (hasVideo && format.height) {
-                    qualityLabel = `${format.height}p`;
-                    if (format.fps) qualityLabel += ` ${format.fps}fps`;
-                } else if (hasAudio && format.abr) {
-                    qualityLabel = `${Math.round(format.abr)}kbps`;
-                } else {
-                    qualityLabel = format.format_note || 'Unknown';
-                }
-                
-                return {
-                    itag: format.format_id,
-                    qualityLabel: qualityLabel,
-                    container: format.ext || 'unknown',
-                    hasVideo: hasVideo,
-                    hasAudio: hasAudio,
-                    audioBitrate: format.abr || 0,
-                    contentLength: format.filesize || 0,
-                    fps: format.fps || 0,
-                    format_note: format.format_note || '',
-                    resolution: format.resolution || '',
-                    filesize: format.filesize ? Math.round(format.filesize / (1024 * 1024)) + ' MB' : 'Bilinmiyor',
-                    vcodec: format.vcodec || 'none',
-                    acodec: format.acodec || 'none'
-                };
-            })
-            // Önce video+ses içerenleri, sonra sadece video, en son sadece ses formatlarını göster
-            .sort((a, b) => {
-                // Öncelik sırası: 1. Video+Ses, 2. Sadece Video, 3. Sadece Ses
-                const typeOrder = (format) => {
-                    if (format.hasVideo && format.hasAudio) return 0;
-                    if (format.hasVideo) return 1;
-                    if (format.hasAudio) return 2;
-                    return 3;
-                };
-                
-                const orderA = typeOrder(a);
-                const orderB = typeOrder(b);
-                
-                if (orderA !== orderB) return orderA - orderB;
-                
-                // Aynı tiptekiler için çözünürlüğe göre sırala
-                const heightA = parseInt(a.qualityLabel) || 0;
-                const heightB = parseInt(b.qualityLabel) || 0;
-                return heightB - heightA;
-            });
+// Temel video bilgilerini getiren yardımcı fonksiyon
+function fetchBasicInfo(url, userAgent, resolve, reject) {
+    console.log('Temel video bilgileri alınıyor...');
+    
+    // YouTube video ID'sini URL'den çıkart
+    const videoId = extractVideoId(url);
+    if (!videoId) {
+        return reject(new Error('Geçersiz YouTube URL'));
+    }
+    
+    fetch(`https://www.youtube.com/oembed?url=${url}&format=json`, {
+        headers: { 'User-Agent': userAgent }
+    })
+    .then(res => res.json())
+    .then(data => {
+        const thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+        const formats = [
+            // Temel format seçenekleri
+            {
+                itag: 'best',
+                qualityLabel: 'En İyi Kalite',
+                container: 'mp4',
+                hasVideo: true,
+                hasAudio: true,
+                format_note: 'En İyi Kalite (Otomatik)',
+                filesize: 'Otomatik'
+            },
+            {
+                itag: '22',
+                qualityLabel: '720p',
+                container: 'mp4',
+                hasVideo: true,
+                hasAudio: true,
+                format_note: 'HD Video + Ses',
+                filesize: 'Otomatik'
+            },
+            {
+                itag: '18',
+                qualityLabel: '360p',
+                container: 'mp4',
+                hasVideo: true,
+                hasAudio: true,
+                format_note: 'Orta Kalite Video + Ses',
+                filesize: 'Otomatik'
+            }
+        ];
         
         resolve({
-            title: info.title,
-            thumbnailUrl: thumbnail,
-            formats
+            title: data.title || `YouTube Video (${videoId})`,
+            thumbnailUrl: thumbnailUrl,
+            formats: formats
         });
+    })
+    .catch(err => {
+        console.error('Video bilgileri alınamadı:', err);
         
-    } catch (error) {
-        console.error('Video bilgilerini işleme hatası:', error);
-        reject(new Error('Video bilgileri işlenemedi.'));
-    }
+        // En azından birkaç temel formatı göster
+        resolve({
+            title: `YouTube Video (${videoId})`,
+            thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+            formats: [
+                {
+                    itag: 'best',
+                    qualityLabel: 'En İyi Kalite',
+                    container: 'mp4',
+                    hasVideo: true,
+                    hasAudio: true,
+                    format_note: 'En İyi Kalite (Otomatik)',
+                    filesize: 'Otomatik'
+                },
+                {
+                    itag: '22',
+                    qualityLabel: '720p',
+                    container: 'mp4',
+                    hasVideo: true,
+                    hasAudio: true,
+                    format_note: 'HD Video + Ses',
+                    filesize: 'Otomatik'
+                }
+            ]
+        });
+    });
 }
 
 // Video indirme fonksiyonu
 async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
-    try {
-        // İndirme işleminin başlamadan önce formatı belirlemeye çalışalım
-        const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
-        // Tarayıcı bilgisi (user-agent) ekle
-        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
-        
-        // Format bilgilerini al
+    return new Promise(async (resolve, reject) => {
         try {
-            const formatCmd = process.env.NODE_ENV === 'production'
-                ? `${ytdlpPath} -F "${videoUrl}" --user-agent "${userAgent}" --no-check-certificate`
-                : `"${ytdlpPath}" -F "${videoUrl}" --user-agent "${userAgent}" --no-check-certificate`;
+            // İndirme işleminin başlamadan önce formatı belirlemeye çalışalım
+            const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
+            // Tarayıcı bilgisi (user-agent) ekle
+            const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
+            
+            // Format bilgilerini al
+            try {
+                const formatCmd = process.env.NODE_ENV === 'production'
+                    ? `${ytdlpPath} -F "${videoUrl}" --user-agent "${userAgent}" --no-check-certificate`
+                    : `"${ytdlpPath}" -F "${videoUrl}" --user-agent "${userAgent}" --no-check-certificate`;
 
-            const formatOutput = await new Promise((resolve, reject) => {
-                exec(formatCmd, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-                    if (error) {
-                        reject(error);
+                const formatOutput = await new Promise((resolveFormat, rejectFormat) => {
+                    exec(formatCmd, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+                        if (error) {
+                            rejectFormat(error);
+                            return;
+                        }
+                        resolveFormat(stdout);
+                    });
+                });
+                
+                // Seçilen format ID'sini formatlar listesinde bul
+                const formatLines = formatOutput.split('\n');
+                let outputExt = 'mp4'; // Varsayılan uzantı
+                for (const line of formatLines) {
+                    if (line.includes(itag)) {
+                        // Format satırında uzantıyı tespit et
+                        const extMatch = line.match(/\b(mp4|webm|m4a|opus|ogg)\b/i);
+                        if (extMatch) {
+                            outputExt = extMatch[0].toLowerCase();
+                            console.log(`Format için uzantı tespit edildi: ${outputExt}`);
+                        }
+                        break;
+                    }
+                }
+                
+                // Çıktı dosyasını formatla benzersiz bir şekilde adlandır
+                const outputFile = path.join(downloadDir, `${videoId}_${itag}.${outputExt}`);
+                console.log(`Çıktı dosyası: ${outputFile}`);
+                
+                // Eğer itag "best" ise, en iyi kaliteyi seçelim
+                let formatOption;
+                if (itag === 'best') {
+                    formatOption = `-f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"`;
+                } else if (itag && itag.includes('+')) {
+                    // İki format birleştirilecek (örn: 313+251)
+                    formatOption = `-f "${itag.replace('+', '+')}"`;
+                } else {
+                    // İtag değerini doğrudan kullan
+                    formatOption = itag ? `-f "${itag}"` : `-f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"`;
+                }
+                
+                // MP4 formatına dönüştürme parametresi ve ses+video birleştirme için gerekli seçenekler
+                const mergeParam = '--merge-output-format mp4';
+                
+                // Çıktı uzantısını MP4 olarak ayarla
+                progressTracker[videoId].outputFile = `${videoId}_${itag}.mp4`;
+                
+                // yt-dlp ile indirme komutunu güncelle - Production ortamında farklı komut kullanacak
+                let command;
+                if (process.env.NODE_ENV === 'production') {
+                    // Render deployment için doğru yolu kullan
+                    const ytdlpProductionPath = '/usr/local/bin/yt-dlp';
+                    command = `${ytdlpProductionPath} ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir ${mergeParam}`;
+                } else {
+                    command = `"${ytdlpPath}" ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir ${mergeParam}`;
+                }
+                
+                console.log('İndirme komutu çalıştırılıyor:', command);
+                
+                // Komutu çalıştır
+                const childProcess = spawn(command, { shell: true });
+                
+                let lastProgress = 0;
+                let progressRegex = /(\d+\.\d+)%/;
+                
+                childProcess.stdout.on('data', (data) => {
+                    const output = data.toString();
+                    console.log('İndirme çıktısı:', output);
+                    
+                    // Önce videoId'nin progressTracker'da hala mevcut olup olmadığını kontrol et
+                    if (!progressTracker[videoId]) {
+                        console.log(`İlerleme takibi zaten silinmiş (${videoId}), çıktı yoksayılıyor`);
                         return;
                     }
-                    resolve(stdout);
-                });
-            });
-            
-            // Seçilen format ID'sini formatlar listesinde bul
-            const formatLines = formatOutput.split('\n');
-            for (const line of formatLines) {
-                if (line.includes(itag)) {
-                    // Format satırında uzantıyı tespit et
-                    const extMatch = line.match(/\b(mp4|webm|m4a|opus|ogg)\b/i);
-                    if (extMatch) {
-                        outputExt = extMatch[0].toLowerCase();
-                        console.log(`Format için uzantı tespit edildi: ${outputExt}`);
+                    
+                    // İlerleme yüzdesini tespit et
+                    const match = progressRegex.exec(output);
+                    if (match && match[1]) {
+                        const progress = parseFloat(match[1]) / 100;
+                        if (progress > lastProgress) {
+                            lastProgress = progress;
+                            progressTracker[videoId].progress = progress;
+                            progressTracker[videoId].status = `İndiriliyor... %${Math.round(progress * 100)}`;
+                        }
                     }
-                    break;
-                }
-            }
-        } catch (formatError) {
-            console.error('Format bilgisi alınamadı:', formatError);
-            // Varsayılan MP4 uzantısını kullanacağız
-        }
-        
-        // MP4 her zaman daha iyi çalıştığı için outputExt'i her zaman mp4 yapıyoruz
-        outputExt = 'mp4';
-        
-        // Çıktı dosyasını formatla benzersiz bir şekilde adlandır
-        const outputFile = path.join(downloadDir, `${videoId}_${itag}.${outputExt}`);
-        console.log(`Çıktı dosyası: ${outputFile}`);
-        
-        // Eğer itag "best" ise, en iyi kaliteyi seçelim
-        let formatOption;
-        if (itag === 'best') {
-            formatOption = `-f bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`;
-        } else {
-            formatOption = itag ? `-f ${itag}` : `-f bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best`;
-        }
-        
-        // yt-dlp ile indirme komutunu güncelle - Production ortamında farklı komut kullanacak
-        let command;
-        if (process.env.NODE_ENV === 'production') {
-            command = `/usr/local/bin/yt-dlp ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir`;
-        } else {
-            command = `"${ytdlpPath}" ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir`;
-        }
-        
-        console.log('İndirme komutu çalıştırılıyor:', command);
-        
-        // Komutu çalıştır
-        const childProcess = spawn(command, { shell: true });
-        
-        let lastProgress = 0;
-        let progressRegex = /(\d+\.\d+)%/;
-        
-        childProcess.stdout.on('data', (data) => {
-            const output = data.toString();
-            console.log('İndirme çıktısı:', output);
-            
-            // İlerleme yüzdesini tespit et
-            const match = progressRegex.exec(output);
-            if (match && match[1]) {
-                const progress = parseFloat(match[1]) / 100;
-                if (progress > lastProgress) {
-                    lastProgress = progress;
-                    progressTracker[videoId].progress = progress;
-                    progressTracker[videoId].status = `İndiriliyor... %${Math.round(progress * 100)}`;
-                }
-            }
-        });
-        
-        childProcess.stderr.on('data', (data) => {
-            const error = data.toString();
-            console.error('İndirme hatası:', error);
-            progressTracker[videoId].status = `İndirme devam ediyor... (Hata çıktısı: ${error.split('\n')[0]})`;
-            
-            // Yine de ilerleme bilgisi olabilir
-            const match = progressRegex.exec(error);
-            if (match && match[1]) {
-                const progress = parseFloat(match[1]) / 100;
-                if (progress > lastProgress) {
-                    lastProgress = progress;
-                    progressTracker[videoId].progress = progress;
-                }
-            }
-        });
-        
-        childProcess.on('close', (code) => {
-            // İndirilen dosyayı kontrol et
-            fs.access(outputFile, fs.constants.F_OK, (err) => {
-                if (code === 0 && !err) {
-                    // Dosya başarıyla oluşturuldu ve kod 0 ile tamamlandı
-                    progressTracker[videoId].progress = 1;
-                    progressTracker[videoId].status = 'İndirme tamamlandı!';
-                    progressTracker[videoId].complete = true;
-                    progressTracker[videoId].outputFile = `${videoId}_${itag}.mp4`;
+                });
+                
+                childProcess.stderr.on('data', (data) => {
+                    const error = data.toString();
+                    console.error('İndirme hatası:', error);
                     
-                    console.log(`Video başarıyla indirildi: ${outputFile}`);
-                } else {
-                    // Başarısız - youtube-dl ile dene
-                    console.error(`yt-dlp çıkış kodu ${code} ile tamamlandı veya dosya bulunamadı. youtube-dl deneniyor...`);
+                    // Önce videoId'nin progressTracker'da hala mevcut olup olmadığını kontrol et
+                    if (!progressTracker[videoId]) {
+                        console.log(`İlerleme takibi zaten silinmiş (${videoId}), hata çıktısı yoksayılıyor`);
+                        return;
+                    }
                     
-                    // youtube-dl ile alternatif indirme komutu - ffmpeg olmadığı için dönüştürme kaldırıldı
-                    const altCommand = process.env.NODE_ENV === 'production'
-                        ? `${ytdlpPath} ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir`
-                        : `youtube-dl ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}"`;
+                    progressTracker[videoId].status = `İndirme devam ediyor... (Hata çıktısı: ${error.split('\n')[0]})`;
                     
-                    const altProcess = spawn(altCommand, { shell: true });
-                    
-                    altProcess.stdout.on('data', (data) => {
-                        const output = data.toString();
-                        console.log('youtube-dl çıktısı:', output);
-                        
-                        const match = progressRegex.exec(output);
-                        if (match && match[1]) {
-                            const progress = parseFloat(match[1]) / 100;
-                            if (progress > lastProgress) {
-                                lastProgress = progress;
-                                progressTracker[videoId].progress = progress;
-                                progressTracker[videoId].status = `İndiriliyor... %${Math.round(progress * 100)}`;
-                            }
+                    // Yine de ilerleme bilgisi olabilir
+                    const match = progressRegex.exec(error);
+                    if (match && match[1]) {
+                        const progress = parseFloat(match[1]) / 100;
+                        if (progress > lastProgress) {
+                            lastProgress = progress;
+                            progressTracker[videoId].progress = progress;
                         }
-                    });
+                    }
+                });
+                
+                // Bu çıkış kodları için yine de başarılı kabul et (bazı durumlarda 1 dönebilir ama dosya başarıyla indirilebilir)
+                const successCodes = [0, 1];
+
+                childProcess.on('close', (code) => {
+                    console.log(`İndirme işlemi tamamlandı. Çıkış kodu: ${code}`);
                     
-                    altProcess.stderr.on('data', (data) => {
-                        console.error('youtube-dl hatası:', data.toString());
-                    });
-                    
-                    altProcess.on('close', (altCode) => {
-                        if (altCode === 0) {
-                            progressTracker[videoId].progress = 1;
-                            progressTracker[videoId].status = 'İndirme tamamlandı!';
-                            progressTracker[videoId].complete = true;
-                            progressTracker[videoId].outputFile = `${videoId}_${itag}.mp4`;
+                    // Biraz bekle - bazı durumlarda dosyanın yazılması veya birleştirilmesi için ek süre gerekebilir
+                    setTimeout(() => {
+                        try {
+                            // İndirme sırasında oluşturulan tüm dosyaları kontrol et
+                            const downloadedFiles = fs.readdirSync(downloadDir)
+                                .filter(file => file.startsWith(`${videoId}_${itag}`))
+                                .map(file => path.join(downloadDir, file));
                             
-                            console.log(`Video başarıyla indirildi: ${outputFile}`);
-                        } else {
-                            progressTracker[videoId].error = 'Video indirilemedi.';
-                            console.error(`youtube-dl çıkış kodu ${altCode} ile tamamlandı.`);
+                            console.log(`Bulunan indirilen dosyalar:`, downloadedFiles);
+                            
+                            if (downloadedFiles.length > 0) {
+                                // En büyük dosyayı bul (bu muhtemelen ana video dosyasıdır)
+                                let largestFile = null;
+                                let largestSize = 0;
+                                
+                                for (const file of downloadedFiles) {
+                                    const stats = fs.statSync(file);
+                                    if (stats.size > largestSize) {
+                                        largestSize = stats.size;
+                                        largestFile = file;
+                                    }
+                                }
+                                
+                                if (largestFile && largestSize > 0) {
+                                    const actualFilename = path.basename(largestFile);
+                                    progressTracker[videoId].progress = 1;
+                                    progressTracker[videoId].status = 'İndirme tamamlandı!';
+                                    progressTracker[videoId].complete = true;
+                                    progressTracker[videoId].outputFile = actualFilename;
+                                    
+                                    console.log(`Video başarıyla indirildi: ${largestFile} (${Math.round(largestSize / (1024*1024))} MB)`);
+                                    resolve(actualFilename);
+                                    return;
+                                }
+                            }
+                            
+                            // Hiç dosya bulunamadı veya boş dosya - tekrar deneme yapalım
+                            console.error(`Geçerli bir dosya bulunamadı. Yeniden deneme yapılıyor...`);
+                            
+                            // Hata durumunda tekrar indirmeyi dene - doğrudan yine yt-dlp ile deneyelim
+                            progressTracker[videoId].status = 'Video formatı değiştirilerek tekrar indiriliyor...';
+                            
+                            // Daha basit bir format deneyelim
+                            let simpleFormatOption;
+                            if (itag === 'best') {
+                                simpleFormatOption = `-f bestvideo+bestaudio/best`;
+                            } else if (itag && itag.includes('+')) {
+                                // İki formatı zaten denemiş, tekrar denemek için sadece birinci formatı al
+                                const firstFormat = itag.split('+')[0];
+                                simpleFormatOption = `-f ${firstFormat}+bestaudio/best`;
+                            } else {
+                                simpleFormatOption = itag ? `-f ${itag}/best` : `-f bestvideo+bestaudio/best`;
+                            }
+                            
+                            // Tekrar indirme için de MP4 birleştirme parametresini kaldıralım
+                            const retryMergeParam = '--recode-video mp4';
+
+                            // Yeni indirme komutu
+                            const retryCommand = process.env.NODE_ENV === 'production'
+                                ? `${ytdlpPath} ${simpleFormatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir --merge-output-format mp4`
+                                : `"${ytdlpPath}" ${simpleFormatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir --merge-output-format mp4`;
+                            
+                            console.log('Tekrar indirme komutu çalıştırılıyor:', retryCommand);
+                            
+                            const retryProcess = spawn(retryCommand, { shell: true });
+                            
+                            retryProcess.stdout.on('data', (data) => {
+                                const output = data.toString();
+                                console.log('Tekrar indirme çıktısı:', output);
+                                
+                                // Önce videoId'nin progressTracker'da hala mevcut olup olmadığını kontrol et
+                                if (!progressTracker[videoId]) {
+                                    console.log(`İlerleme takibi zaten silinmiş (${videoId}), tekrar çıktısı yoksayılıyor`);
+                                    return;
+                                }
+                                
+                                const match = progressRegex.exec(output);
+                                if (match && match[1]) {
+                                    const progress = parseFloat(match[1]) / 100;
+                                    if (progress > lastProgress) {
+                                        lastProgress = progress;
+                                        progressTracker[videoId].progress = progress;
+                                        progressTracker[videoId].status = `Tekrar indiriliyor... %${Math.round(progress * 100)}`;
+                                    }
+                                }
+                            });
+                            
+                            retryProcess.stderr.on('data', (data) => {
+                                console.error('Tekrar indirme hatası:', data.toString());
+                                
+                                // Önce videoId'nin progressTracker'da hala mevcut olup olmadığını kontrol et
+                                if (!progressTracker[videoId]) {
+                                    console.log(`İlerleme takibi zaten silinmiş (${videoId}), tekrar hata çıktısı yoksayılıyor`);
+                                    return;
+                                }
+                            });
+                            
+                            retryProcess.on('close', (retryCode) => {
+                                console.log(`Tekrar indirme işlemi tamamlandı. Çıkış kodu: ${retryCode}`);
+                                
+                                // Dosya varlığını tekrar kontrol et - biraz bekleyerek
+                                setTimeout(() => {
+                                    try {
+                                        // İndirme sırasında oluşturulan tüm dosyaları kontrol et (özellikle yüksek çözünürlüklü formatlar için)
+                                        const downloadedFiles = fs.readdirSync(downloadDir)
+                                            .filter(file => file.startsWith(`${videoId}_${itag}`))
+                                            .map(file => path.join(downloadDir, file));
+                                        
+                                        console.log(`Bulunan indirilen dosyalar:`, downloadedFiles);
+                                        
+                                        if (downloadedFiles.length > 0) {
+                                            // En büyük dosyayı bul (bu muhtemelen ana video dosyasıdır)
+                                            let largestFile = null;
+                                            let largestSize = 0;
+                                            
+                                            for (const file of downloadedFiles) {
+                                                const stats = fs.statSync(file);
+                                                if (stats.size > largestSize) {
+                                                    largestSize = stats.size;
+                                                    largestFile = file;
+                                                }
+                                            }
+                                            
+                                            if (largestFile && largestSize > 0) {
+                                                const actualFilename = path.basename(largestFile);
+                                                progressTracker[videoId].progress = 1;
+                                                progressTracker[videoId].status = 'İndirme tamamlandı!';
+                                                progressTracker[videoId].complete = true;
+                                                progressTracker[videoId].outputFile = actualFilename;
+                                                
+                                                console.log(`Video başarıyla indirildi: ${largestFile} (${Math.round(largestSize / (1024*1024))} MB)`);
+                                                resolve(actualFilename);
+                                            } else {
+                                                progressTracker[videoId].error = 'Video indirilemedi: Boş dosya.';
+                                                console.error('Dosya boş: 0 byte');
+                                                reject(new Error('İndirme başarısız: Boş dosya'));
+                                            }
+                                        } else {
+                                            // Dosya yok - son çare olarak 22 formatını deneyelim
+                                            console.error(`Dosya bulunamadı, son deneme olarak 22 formatını kullanıyoruz.`);
+                                            
+                                            // 22 formatı (720p MP4) ile son bir deneme yapalım - zaten MP4 olduğu için ek dönüşüm yapmıyoruz
+                                            const lastOption = `-f 22/18/best`;
+                                            const lastOutputFile = path.join(downloadDir, `${videoId}_backup`); // Uzantıyı koymuyoruz, orijinal uzantı kullanılacak
+                                            
+                                            const lastCommand = process.env.NODE_ENV === 'production'
+                                                ? `${ytdlpPath} ${lastOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${lastOutputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir --merge-output-format mp4`
+                                                : `"${ytdlpPath}" ${lastOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${lastOutputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir --merge-output-format mp4`;
+                                            
+                                            console.log('Son deneme komutu çalıştırılıyor:', lastCommand);
+                                            
+                                            try {
+                                                // Senkron versiyonu kullanarak bekleyelim
+                                                const { status } = require('child_process').spawnSync(lastCommand, { shell: true });
+                                                
+                                                if (status === 0 && fs.existsSync(lastOutputFile)) {
+                                                    const lastFileSize = fs.statSync(lastOutputFile).size;
+                                                    if (lastFileSize > 0) {
+                                                        progressTracker[videoId].progress = 1;
+                                                        progressTracker[videoId].status = 'İndirme tamamlandı! (Yedek format)';
+                                                        progressTracker[videoId].complete = true;
+                                                        progressTracker[videoId].outputFile = `${videoId}_backup`;
+                                                        
+                                                        console.log(`Video yedek formatla indirildi: ${lastOutputFile} (${Math.round(lastFileSize / (1024*1024))} MB)`);
+                                                        resolve(`${videoId}_backup`);
+                                                        return;
+                                                    }
+                                                }
+                                                
+                                                progressTracker[videoId].error = 'Video indirilemedi: Tüm format denemeleri başarısız.';
+                                                reject(new Error('İndirme başarısız: Format bulunamadı'));
+                                            } catch (lastError) {
+                                                console.error('Son deneme hatası:', lastError);
+                                                progressTracker[videoId].error = 'Video indirilemedi: Son deneme başarısız.';
+                                                reject(new Error('İndirme başarısız: Son deneme hata verdi'));
+                                            }
+                                        }
+                                    } catch (fsError) {
+                                        console.error('Dosya kontrolü sırasında hata:', fsError);
+                                        progressTracker[videoId].error = `Dosya kontrolü hatası: ${fsError.message}`;
+                                        reject(new Error(`İndirme başarısız: ${fsError.message}`));
+                                    }
+                                }, 2000); // 2 saniye bekle
+                            });
+                        } catch (fsError) {
+                            console.error('Dosya kontrolü sırasında hata:', fsError);
+                            progressTracker[videoId].error = `Dosya kontrolü hatası: ${fsError.message}`;
+                            reject(new Error(`İndirme başarısız: ${fsError.message}`));
                         }
-                    });
-                }
-            });
-        });
-        
-    } catch (error) {
-        console.error('Video indirme hatası:', error);
-        progressTracker[videoId].error = error.message;
-    }
+                    }, 2000); // 2 saniye bekle
+                });
+            } catch (formatError) {
+                console.error('Format bilgisi alınamadı:', formatError);
+                reject(formatError);
+            }
+            
+        } catch (error) {
+            console.error('Video indirme hatası:', error);
+            progressTracker[videoId].error = error.message;
+            reject(error);
+        }
+    });
 }
 
 // Belirli bir port üzerinde sunucuyu başlatmayı deneyen fonksiyon
@@ -699,4 +859,4 @@ function extractVideoId(url) {
     const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
     const match = url.match(regExp);
     return (match && match[7].length === 11) ? match[7] : null;
-} 
+}
