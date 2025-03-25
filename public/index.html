@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Video İndirici</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>YouTube Video İndirici</h1>
+        
+        <div class="form-group">
+            <input type="text" id="videoUrl" placeholder="YouTube Video URL'sini girin" class="input-field">
+            <button id="fetchBtn" class="btn primary">Bilgileri Getir</button>
+        </div>
+
+        <div id="videoInfo" class="video-info hidden">
+            <div class="video-preview">
+                <img id="thumbnail" src="" alt="Video önizleme">
+                <h3 id="videoTitle"></h3>
+            </div>
+            
+            <div class="format-selection">
+                <h3>Format Seçin</h3>
+                <div id="formatList" class="format-list"></div>
+            </div>
+            
+            <button id="downloadBtn" class="btn primary">İndir</button>
+        </div>
+
+        <div id="downloadStatus" class="download-status hidden">
+            <h3>İndirme Durumu</h3>
+            <div class="progress-container">
+                <div id="progressBar" class="progress-bar"></div>
+                <span id="progressText">%0</span>
+            </div>
+            <div id="downloadMessage"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 

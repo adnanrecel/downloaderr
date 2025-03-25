@@ -1,67 +1,57 @@
 # YouTube Video İndirici
 
-Bu uygulama, YouTube videolarını farklı kalitelerde indirmenizi sağlayan basit bir web uygulamasıdır.
+YouTube videolarını çeşitli formatlarda indirmek için basit bir web uygulaması.
 
 ## Özellikler
 
-- YouTube video URL'si girişi
-- Video hakkında bilgi görüntüleme (başlık, yükleyen, süre, vb.)
-- Farklı video kalitelerinde indirme seçeneği
-- İndirilen videolar MP4 formatında ve ses içerir
-- Kolay kullanımlı arayüz
+- Video bilgilerini ve mevcut formatları görüntüleme
+- Çeşitli çözünürlük ve kalite seçenekleriyle video indirme
+- Sadece ses indirme seçeneği
+- Doğrudan bilgisayara indirme
 
-## Gereksinimler
+## Yerel Ortamda Çalıştırma
 
-- Python 3.6+
-- Flask
-- pytube
-- ffmpeg-python
-- gunicorn (yalnızca dağıtım için)
+### Gereksinimler
 
-## Kurulum
+- Node.js (v14 veya üstü)
+- npm veya yarn
 
-1. Depoyu klonlayın:
-```
-git clone https://github.com/kullaniciadi/youtube-download.git
-cd youtube-download
-```
+### Kurulum
 
-2. Gerekli paketleri yükleyin:
-```
-pip install -r requirements.txt
-```
+1. Projeyi klonlayın:
+   ```
+   git clone https://github.com/kullaniciadi/youtube-download.git
+   cd youtube-download
+   ```
 
-3. Uygulamayı çalıştırın:
-```
-python app.py
-```
+2. Bağımlılıkları yükleyin:
+   ```
+   npm install
+   ```
 
-4. Tarayıcınızda şu adrese gidin: `http://127.0.0.1:5000`
+3. Uygulamayı başlatın:
+   ```
+   npm start
+   ```
 
-## Kullanım
+4. Tarayıcınızda şu adresi açın: `http://localhost:3000`
 
-1. Ana sayfada, indirmek istediğiniz YouTube video URL'sini girin.
-2. "Video Bilgilerini Al" düğmesine tıklayın.
-3. Kullanılabilir video kalitelerinden birini seçin.
-4. "Videoyu İndir" düğmesine tıklayın.
-5. İndirme tamamlandığında, dosyayı bilgisayarınıza indirin.
+## Render.com üzerinde Deploy Etme
 
-## Dağıtım
+1. GitHub deposunu Render.com'a bağlayın
+2. "Blueprint" seçeneğini kullanarak `render.yaml` dosyasını kullanın
+3. veya "New Web Service" seçeneğini seçin ve şu ayarları yapın:
+   - Build Command: `npm install`
+   - Start Command: `npm start`
+   - Advanced: "Add Docker" seçeneğini aktif edin
 
-### Render'a Dağıtım
+## Teknolojiler
 
-1. Render'da bir hesap oluşturun.
-2. "New Web Service" seçeneğine tıklayın.
-3. GitHub deponuzu bağlayın.
-4. Aşağıdaki ayarları yapın:
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `gunicorn app:app`
-5. "Create Web Service" düğmesine tıklayın.
+- Node.js
+- Express.js
+- yt-dlp / youtube-dl
+- FFmpeg (Render üzerinde otomatik kurulur)
 
 ## Lisans
 
-Bu proje MIT lisansı altında lisanslanmıştır.
-
-## Uyarı
-
-Bu uygulama yalnızca telif hakkına sahip olmadığınız YouTube içeriklerini indirmek için kullanılmamalıdır. Telif hakkı yasalarına uygun şekilde kullanım sizin sorumluluğunuzdadır. 
+MIT 

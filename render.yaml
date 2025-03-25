@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: youtube-downloader
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 10000
+    plan: free
+    branch: main
+    healthCheckPath: / 
