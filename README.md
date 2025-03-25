@@ -1,57 +1,67 @@
 # YouTube Video İndirici
 
-Modern ve kullanımı kolay bir YouTube video indirme uygulaması.
+Bu uygulama, YouTube videolarını farklı kalitelerde indirmenizi sağlayan basit bir web uygulamasıdır.
 
 ## Özellikler
 
-- YouTube videolarını kolayca indirin
-- Tüm video kalite seçeneklerini görüntüleyin
-- Ses ve video tek bir mp4 dosyasında
-- Modern ve kullanıcı dostu arayüz
-- Karanlık/aydınlık tema desteği
+- YouTube video URL'si girişi
+- Video hakkında bilgi görüntüleme (başlık, yükleyen, süre, vb.)
+- Farklı video kalitelerinde indirme seçeneği
+- İndirilen videolar MP4 formatında ve ses içerir
+- Kolay kullanımlı arayüz
+
+## Gereksinimler
+
+- Python 3.6+
+- Flask
+- pytube
+- ffmpeg-python
+- gunicorn (yalnızca dağıtım için)
 
 ## Kurulum
 
 1. Depoyu klonlayın:
-   ```bash
-   git clone https://github.com/kullaniciadi/youtube-download.git
-   cd youtube-download
-   ```
+```
+git clone https://github.com/kullaniciadi/youtube-download.git
+cd youtube-download
+```
 
-2. Bağımlılıkları yükleyin:
-   ```bash
-   npm install
-   ```
+2. Gerekli paketleri yükleyin:
+```
+pip install -r requirements.txt
+```
 
 3. Uygulamayı çalıştırın:
-   ```bash
-   npm run dev
-   ```
+```
+python app.py
+```
 
-4. Tarayıcınızda açın: `http://localhost:3000`
+4. Tarayıcınızda şu adrese gidin: `http://127.0.0.1:5000`
 
 ## Kullanım
 
-1. YouTube video URL'sini giriş kutusuna yapıştırın
-2. "Arama" butonuna tıklayın
-3. İstediğiniz kaliteyi seçin ve "İndir" butonuna tıklayın
-4. Video otomatik olarak indirilecektir
+1. Ana sayfada, indirmek istediğiniz YouTube video URL'sini girin.
+2. "Video Bilgilerini Al" düğmesine tıklayın.
+3. Kullanılabilir video kalitelerinden birini seçin.
+4. "Videoyu İndir" düğmesine tıklayın.
+5. İndirme tamamlandığında, dosyayı bilgisayarınıza indirin.
 
 ## Dağıtım
 
-Bu uygulamayı [Render](https://render.com) veya benzer platformlar üzerinde dağıtabilirsiniz.
+### Render'a Dağıtım
 
-## Teknolojiler
-
-- [Next.js](https://nextjs.org)
-- [React](https://reactjs.org)
-- [Tailwind CSS](https://tailwindcss.com)
-- [ytdl-core](https://github.com/fent/node-ytdl-core)
+1. Render'da bir hesap oluşturun.
+2. "New Web Service" seçeneğine tıklayın.
+3. GitHub deponuzu bağlayın.
+4. Aşağıdaki ayarları yapın:
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `gunicorn app:app`
+5. "Create Web Service" düğmesine tıklayın.
 
 ## Lisans
 
-Bu proje [MIT Lisansı](LICENSE) ile lisanslanmıştır.
+Bu proje MIT lisansı altında lisanslanmıştır.
 
-## Yasal Uyarı
+## Uyarı
 
-Bu uygulama eğitim amaçlıdır. Telif hakkı içeren içerikleri indirmeden önce gerekli izinleri aldığınızdan emin olun. Telif haklarına saygı duyun ve bu uygulamayı yalnızca yasal amaçlar için kullanın.
+Bu uygulama yalnızca telif hakkına sahip olmadığınız YouTube içeriklerini indirmek için kullanılmamalıdır. Telif hakkı yasalarına uygun şekilde kullanım sizin sorumluluğunuzdadır. 
