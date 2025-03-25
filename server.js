@@ -199,113 +199,194 @@ app.get('/download/:filename', (req, res) => {
 // Video bilgilerini çeken fonksiyon
 function getVideoInfo(url) {
     return new Promise((resolve, reject) => {
-        // yt-dlp komutu ile video bilgilerini JSON formatında almak
-        // Production ortamında yt-dlp doğrudan binary kullanılabilir olacak
-        const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
-        const command = process.env.NODE_ENV === 'production' 
-            ? `${ytdlpPath} "${url}" --dump-json --no-warnings --no-call-home --skip-download`
-            : `"${ytdlpPath}" "${url}" --dump-json --no-warnings --no-call-home --skip-download`;
+        // Tarayıcı bilgisi (user-agent) ekle
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
         
-        console.log("Kullanılan komut:", command);
-        
-        exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-            if (error) {
-                console.error('yt-dlp JSON bilgi alma hatası:', error);
-                // Hata durumunda YouTube'un web API'sini kullanarak bilgileri almayı deneyelim
-                fetch(`https://www.youtube.com/oembed?url=${url}&format=json`)
-                    .then(res => res.json())
-                    .then(data => {
-                        // Çok çeşitli format bilgilerini oluştur
-                        const formats = [
-                            // Video + Ses formatları (MP4)
-                            {
-                                itag: 'best',
-                                qualityLabel: 'En iyi kalite (1080p)',
-                                container: 'mp4',
-                                hasVideo: true,
-                                hasAudio: true,
-                                format_note: 'Full HD Video + Ses'
-                            },
-                            {
-                                itag: '22',
-                                qualityLabel: '720p',
-                                container: 'mp4',
-                                hasVideo: true,
-                                hasAudio: true,
-                                format_note: 'HD Video + Ses'
-                            },
-                            {
-                                itag: '18',
-                                qualityLabel: '360p',
-                                container: 'mp4',
-                                hasVideo: true,
-                                hasAudio: true,
-                                format_note: 'Orta Kalite Video + Ses'
-                            },
-                            // Sadece video formatları
-                            {
-                                itag: '137',
-                                qualityLabel: '1080p',
-                                container: 'mp4',
-                                hasVideo: true,
-                                hasAudio: false,
-                                format_note: 'Full HD (Sadece Video)'
-                            },
-                            {
-                                itag: '136',
-                                qualityLabel: '720p',
-                                container: 'mp4',
-                                hasVideo: true,
-                                hasAudio: false,
-                                format_note: 'HD (Sadece Video)'
-                            },
-                            // Sadece ses formatları
-                            {
-                                itag: '140',
-                                qualityLabel: '128kbps',
-                                container: 'm4a',
-                                hasVideo: false,
-                                hasAudio: true,
-                                format_note: 'M4A Audio (Sadece Ses)'
-                            },
-                            {
-                                itag: '251',
-                                qualityLabel: '160kbps',
-                                container: 'webm',
-                                hasVideo: false,
-                                hasAudio: true,
-                                format_note: 'Opus Audio (Sadece Ses)'
-                            },
-                            // Diğer formatlar
-                            {
-                                itag: '43',
-                                qualityLabel: '360p',
-                                container: 'webm',
-                                hasVideo: true,
-                                hasAudio: true,
-                                format_note: 'WebM (Video + Ses)'
-                            }
-                        ];
-                        
-                        resolve({
-                            title: data.title,
-                            thumbnailUrl: data.thumbnail_url,
-                            formats: formats
-                        });
-                    })
-                    .catch(err => {
-                        console.error('Web API ile bilgi alma hatası:', err);
-                        reject(new Error('Video bilgileri alınamadı. Lütfen daha sonra tekrar deneyin.'));
-                    });
-                return;
-            }
+        try {
+            // Önce web API ile deneyelim - Render ortamında bu daha güvenilir olabilir
+            console.log('YouTube web API üzerinden video bilgileri alınıyor...');
             
-            try {
-                processVideoInfo(stdout, resolve, reject);
-            } catch (parseError) {
-                reject(parseError);
-            }
-        });
+            fetch(`https://www.youtube.com/oembed?url=${url}&format=json`, {
+                headers: {
+                    'User-Agent': userAgent
+                }
+            })
+            .then(res => res.json())
+            .then(data => {
+                // Çok çeşitli format bilgilerini oluştur
+                const formats = [
+                    // Video + Ses formatları (MP4)
+                    {
+                        itag: 'best',
+                        qualityLabel: 'En iyi kalite (1080p)',
+                        container: 'mp4',
+                        hasVideo: true,
+                        hasAudio: true,
+                        format_note: 'Full HD Video + Ses',
+                        filesize: 'Otomatik'
+                    },
+                    {
+                        itag: '22',
+                        qualityLabel: '720p',
+                        container: 'mp4',
+                        hasVideo: true,
+                        hasAudio: true,
+                        format_note: 'HD Video + Ses',
+                        filesize: 'Otomatik'
+                    },
+                    {
+                        itag: '18',
+                        qualityLabel: '360p',
+                        container: 'mp4',
+                        hasVideo: true,
+                        hasAudio: true,
+                        format_note: 'Orta Kalite Video + Ses',
+                        filesize: 'Otomatik'
+                    },
+                    // Sadece video formatları
+                    {
+                        itag: '137',
+                        qualityLabel: '1080p',
+                        container: 'mp4',
+                        hasVideo: true,
+                        hasAudio: false,
+                        format_note: 'Full HD (Sadece Video)',
+                        filesize: 'Otomatik'
+                    },
+                    {
+                        itag: '136',
+                        qualityLabel: '720p',
+                        container: 'mp4',
+                        hasVideo: true,
+                        hasAudio: false,
+                        format_note: 'HD (Sadece Video)',
+                        filesize: 'Otomatik'
+                    },
+                    // Sadece ses formatları
+                    {
+                        itag: '140',
+                        qualityLabel: '128kbps',
+                        container: 'm4a',
+                        hasVideo: false,
+                        hasAudio: true,
+                        format_note: 'M4A Audio (Sadece Ses)',
+                        filesize: 'Otomatik'
+                    },
+                    {
+                        itag: '251',
+                        qualityLabel: '160kbps',
+                        container: 'webm',
+                        hasVideo: false,
+                        hasAudio: true,
+                        format_note: 'Opus Audio (Sadece Ses)',
+                        filesize: 'Otomatik'
+                    }
+                ];
+                
+                console.log('Web API kullanılarak video bilgileri alındı');
+                resolve({
+                    title: data.title,
+                    thumbnailUrl: data.thumbnail_url,
+                    formats: formats
+                });
+            })
+            .catch(err => {
+                console.error('Web API ile bilgi alma hatası, yt-dlp deneniyor:', err);
+                
+                // Web API başarısız olursa yt-dlp ile deneyelim (yedek yöntem)
+                tryYtDlp();
+            });
+        } catch (error) {
+            console.error('Hata oluştu, yt-dlp deneniyor:', error);
+            tryYtDlp();
+        }
+        
+        // yt-dlp ile bilgi almayı deneyen fonksiyon
+        function tryYtDlp() {
+            // yt-dlp komutu ile video bilgilerini JSON formatında almak
+            const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
+            const command = process.env.NODE_ENV === 'production' 
+                ? `${ytdlpPath} "${url}" --dump-json --no-warnings --no-call-home --skip-download --user-agent "${userAgent}"`
+                : `"${ytdlpPath}" "${url}" --dump-json --no-warnings --no-call-home --skip-download --user-agent "${userAgent}"`;
+            
+            console.log("yt-dlp ile bilgi alınmaya çalışılıyor. Komut:", command);
+            
+            exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+                if (error) {
+                    console.error('yt-dlp JSON bilgi alma hatası:', error);
+                    console.error('yt-dlp stderr:', stderr);
+                    
+                    // YouTube video ID'sini URL'den çıkartıp thumbnail oluşturalım
+                    const videoId = extractVideoId(url);
+                    const thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+                    
+                    // Temel formatları manuel olarak oluştur
+                    const formats = [
+                        // Video + Ses formatları (MP4)
+                        {
+                            itag: 'best',
+                            qualityLabel: 'En iyi kalite (1080p)',
+                            container: 'mp4',
+                            hasVideo: true,
+                            hasAudio: true,
+                            format_note: 'Full HD Video + Ses',
+                            filesize: 'Otomatik'
+                        },
+                        {
+                            itag: '22',
+                            qualityLabel: '720p',
+                            container: 'mp4',
+                            hasVideo: true,
+                            hasAudio: true,
+                            format_note: 'HD Video + Ses',
+                            filesize: 'Otomatik'
+                        },
+                        {
+                            itag: '18',
+                            qualityLabel: '360p',
+                            container: 'mp4',
+                            hasVideo: true,
+                            hasAudio: true,
+                            format_note: 'Orta Kalite Video + Ses',
+                            filesize: 'Otomatik'
+                        },
+                        // Sadece ses formatları
+                        {
+                            itag: '140',
+                            qualityLabel: '128kbps',
+                            container: 'm4a',
+                            hasVideo: false,
+                            hasAudio: true,
+                            format_note: 'M4A Audio (Sadece Ses)',
+                            filesize: 'Otomatik'
+                        }
+                    ];
+                    
+                    // URL'den video başlığını tahmin et
+                    const urlObj = new URL(url);
+                    let title = "YouTube Video";
+                    if (urlObj.searchParams.has('v')) {
+                        const videoId = urlObj.searchParams.get('v');
+                        title = `YouTube Video (${videoId})`;
+                    }
+                    
+                    console.log('Manuel olarak format bilgileri oluşturuldu');
+                    resolve({
+                        title: title,
+                        thumbnailUrl: thumbnailUrl,
+                        formats: formats
+                    });
+                    return;
+                }
+                
+                try {
+                    processVideoInfo(stdout, resolve, reject);
+                } catch (parseError) {
+                    console.error('JSON işleme hatası:', parseError);
+                    reject(parseError);
+                }
+            });
+        }
     });
 }
 
@@ -389,12 +470,14 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
     try {
         // İndirme işleminin başlamadan önce formatı belirlemeye çalışalım
         const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
+        // Tarayıcı bilgisi (user-agent) ekle
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
         
         // Format bilgilerini al
         try {
             const formatCmd = process.env.NODE_ENV === 'production'
-                ? `${ytdlpPath} -F "${videoUrl}"`
-                : `"${ytdlpPath}" -F "${videoUrl}"`;
+                ? `${ytdlpPath} -F "${videoUrl}" --user-agent "${userAgent}" --no-check-certificate`
+                : `"${ytdlpPath}" -F "${videoUrl}" --user-agent "${userAgent}" --no-check-certificate`;
 
             const formatOutput = await new Promise((resolve, reject) => {
                 exec(formatCmd, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
@@ -442,20 +525,20 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
         // yt-dlp ile indirme komutunu güncelle - Production ortamında farklı komut kullanacak
         let command;
         if (process.env.NODE_ENV === 'production') {
-            command = `/usr/local/bin/yt-dlp ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite`;
+            command = `/usr/local/bin/yt-dlp ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir`;
         } else {
-            command = `"${ytdlpPath}" ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite`;
+            command = `"${ytdlpPath}" ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir`;
         }
         
         console.log('İndirme komutu çalıştırılıyor:', command);
         
         // Komutu çalıştır
-        const process = spawn(command, { shell: true });
+        const childProcess = spawn(command, { shell: true });
         
         let lastProgress = 0;
         let progressRegex = /(\d+\.\d+)%/;
         
-        process.stdout.on('data', (data) => {
+        childProcess.stdout.on('data', (data) => {
             const output = data.toString();
             console.log('İndirme çıktısı:', output);
             
@@ -471,7 +554,7 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
             }
         });
         
-        process.stderr.on('data', (data) => {
+        childProcess.stderr.on('data', (data) => {
             const error = data.toString();
             console.error('İndirme hatası:', error);
             progressTracker[videoId].status = `İndirme devam ediyor... (Hata çıktısı: ${error.split('\n')[0]})`;
@@ -487,7 +570,7 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
             }
         });
         
-        process.on('close', (code) => {
+        childProcess.on('close', (code) => {
             // İndirilen dosyayı kontrol et
             fs.access(outputFile, fs.constants.F_OK, (err) => {
                 if (code === 0 && !err) {
@@ -504,8 +587,8 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
                     
                     // youtube-dl ile alternatif indirme komutu - ffmpeg olmadığı için dönüştürme kaldırıldı
                     const altCommand = process.env.NODE_ENV === 'production'
-                        ? `${ytdlpPath} ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite`
-                        : `youtube-dl ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite`;
+                        ? `${ytdlpPath} ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}" --no-cache-dir`
+                        : `youtube-dl ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite --user-agent "${userAgent}"`;
                     
                     const altProcess = spawn(altCommand, { shell: true });
                     
