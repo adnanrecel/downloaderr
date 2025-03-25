@@ -388,16 +388,17 @@ function processVideoInfo(jsonData, resolve, reject) {
 // Video indirme fonksiyonu
 async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
     try {
-        // Seçilen format ve uzantıya göre çıktı dosyasını belirle
-        let outputExt = 'mp4'; // Varsayılan uzantı
-        
         // İndirme işleminin başlamadan önce formatı belirlemeye çalışalım
         const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
         
         // Format bilgilerini al
         try {
+            const formatCmd = process.env.NODE_ENV === 'production'
+                ? `${ytdlpPath} -F "${videoUrl}"`
+                : `"${ytdlpPath}" -F "${videoUrl}"`;
+
             const formatOutput = await new Promise((resolve, reject) => {
-                exec(`"${ytdlpPath}" -F "${videoUrl}"`, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+                exec(formatCmd, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
                     if (error) {
                         reject(error);
                         return;
@@ -474,6 +475,7 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
         process.stderr.on('data', (data) => {
             const error = data.toString();
             console.error('İndirme hatası:', error);
+            progressTracker[videoId].status = `İndirme devam ediyor... (Hata çıktısı: ${error.split('\n')[0]})`;
             
             // Yine de ilerleme bilgisi olabilir
             const match = progressRegex.exec(error);
@@ -503,7 +505,7 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
                     
                     // youtube-dl ile alternatif indirme komutu - ffmpeg olmadığı için dönüştürme kaldırıldı
                     const altCommand = process.env.NODE_ENV === 'production'
-                        ? `youtube-dl ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite`
+                        ? `${ytdlpPath} ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite`
                         : `youtube-dl ${formatOption} --no-warnings --no-check-certificate "${videoUrl}" -o "${outputFile}" --force-overwrite`;
                     
                     const altProcess = spawn(altCommand, { shell: true });
