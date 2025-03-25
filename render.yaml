@@ -3,9 +3,12 @@ services:
     name: youtube-downloader
     runtime: docker
     dockerfilePath: ./Dockerfile
+    buildCommand: docker build -t youtube-downloader .
     envVars:
       - key: PORT
         value: 10000
+      - key: NODE_ENV
+        value: production
     plan: free
     branch: main
     healthCheckPath: / 

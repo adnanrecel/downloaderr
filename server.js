@@ -201,8 +201,13 @@ app.get('/download/:filename', (req, res) => {
 function getVideoInfo(url) {
     return new Promise((resolve, reject) => {
         // yt-dlp komutu ile video bilgilerini JSON formatında almak
-        const ytdlpPath = process.env.NODE_ENV === 'production' ? 'yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
-        const command = `"${ytdlpPath}" "${url}" --dump-json --no-warnings --no-call-home --skip-download`;
+        // Production ortamında yt-dlp doğrudan binary kullanılabilir olacak
+        const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
+        const command = process.env.NODE_ENV === 'production' 
+            ? `${ytdlpPath} "${url}" --dump-json --no-warnings --no-call-home --skip-download`
+            : `"${ytdlpPath}" "${url}" --dump-json --no-warnings --no-call-home --skip-download`;
+        
+        console.log("Kullanılan komut:", command);
         
         exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
             if (error) {
@@ -387,7 +392,7 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
         let outputExt = 'mp4'; // Varsayılan uzantı
         
         // İndirme işleminin başlamadan önce formatı belirlemeye çalışalım
-        const ytdlpPath = process.env.NODE_ENV === 'production' ? 'yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
+        const ytdlpPath = process.env.NODE_ENV === 'production' ? '/usr/local/bin/yt-dlp' : path.join(__dirname, 'bin', 'yt-dlp.exe');
         
         // Format bilgilerini al
         try {
@@ -437,7 +442,7 @@ async function downloadVideo(videoUrl, videoId, itag, hasVideo, hasAudio) {
         // yt-dlp ile indirme komutunu güncelle - Production ortamında farklı komut kullanacak
         let command;
         if (process.env.NODE_ENV === 'production') {
-            command = `yt-dlp ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite`;
+            command = `/usr/local/bin/yt-dlp ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite`;
         } else {
             command = `"${ytdlpPath}" ${formatOption} --no-warnings --no-check-certificate --prefer-free-formats "${videoUrl}" -o "${outputFile}" --force-overwrite`;
         }
