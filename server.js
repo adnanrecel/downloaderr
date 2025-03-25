@@ -6,7 +6,6 @@ const { exec, spawn } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 const fetch = require('node-fetch');
 const http = require('http');
-const open = require('open');
 
 const app = express();
 // Başlangıç port numarası
@@ -603,13 +602,8 @@ async function findAvailablePort() {
         process.exit(1);
     }
     
-    // Uygulama başlatıldığında tarayıcıda otomatik olarak aç
-    try {
-        open(`http://localhost:${PORT}`);
-        console.log('Tarayıcı otomatik olarak açıldı.');
-    } catch (err) {
-        console.log('Tarayıcı otomatik olarak açılamadı. Lütfen manuel olarak http://localhost:' + PORT + ' adresini ziyaret edin.');
-    }
+    // Uygulama başlatıldığında tarayıcıda otomatik olarak açma işlemini kaldır
+    console.log(`Sunucu http://localhost:${PORT} adresinde çalışıyor. Tarayıcınızdan bu adrese gidebilirsiniz.`);
     
     return PORT;
 }
